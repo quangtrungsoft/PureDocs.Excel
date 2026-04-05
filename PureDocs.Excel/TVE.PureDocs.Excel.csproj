@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+		<TargetFrameworks>net7.0;net8.0;net9.0</TargetFrameworks>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<LangVersion>latest</LangVersion>
+
+		<!-- NuGet -->
+		<PackageId>TVE.PureDocs.Excel</PackageId>
+		<Version>1.0.0</Version>
+		<Authors>devnn</Authors>
+		<Description>Thư viện **TVE.PureDocs.Excel** cung cấp một bộ công cụ mạnh mẽ để làm việc với tệp Excel (.xlsx) trong .NET. Thư viện này hỗ trợ tạo, đọc, ghi, định dạng và tính toán công thức Excel với hiệu suất cao.</Description>
+		<PackageTags>excel;puredocs;tve;devnn</PackageTags>
+
+		<PackageProjectUrl>https://pure-docs.vuquangtrung.id.vn/</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/quangtrungsoft/PureDocs.Excel</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageReleaseNotes>https://github.com/quangtrungsoft/PureDocs.Excel/releases</PackageReleaseNotes>
+
+		<!-- Performance -->
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="DocumentFormat.OpenXml" Version="3.4.1" />
+    </ItemGroup>
+
+	<ItemGroup>
+		<None Include="docs\README.md" Pack="true" PackagePath="\" />
+	</ItemGroup>
+
+</Project>
