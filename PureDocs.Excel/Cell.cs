@@ -11,13 +11,25 @@ public sealed class Cell
     private readonly DocumentFormat.OpenXml.Spreadsheet.Cell _cell;
     private readonly SharedStringManager _sharedStringManager;
     private readonly StyleManager _styleManager;
+    private readonly Worksheet? _owner;
 
-    internal Cell(DocumentFormat.OpenXml.Spreadsheet.Cell cell, SharedStringManager sharedStringManager, StyleManager styleManager)
+    internal Cell(DocumentFormat.OpenXml.Spreadsheet.Cell cell, SharedStringManager sharedStringManager, StyleManager styleManager, Worksheet? owner = null)
     {
         _cell = cell ?? throw new ArgumentNullException(nameof(cell));
         _sharedStringManager = sharedStringManager ?? throw new ArgumentNullException(nameof(sharedStringManager));
         _styleManager = styleManager ?? throw new ArgumentNullException(nameof(styleManager));
+        _owner = owner;
     }
+
+    /// <summary>
+    /// Notifies the owning worksheet's calc chain that this cell's content changed,
+    /// so incremental <see cref="Worksheet.SmartRecalculate"/> can re-evaluate the
+    /// cell (when it holds a formula) and everything that depends on it.
+    /// No-op when the cell is detached from a worksheet or no calc chain is active yet.
+    /// </summary>
+    /// <param name="formula">The new formula (without '='), or null for a value/clear.</param>
+    private void NotifyContentChanged(string? formula)
+        => _owner?.NotifyCellContentChanged(Reference, formula);
 
     /// <summary>
     /// Gets the cell reference (e.g., "A1").
@@ -59,12 +71,14 @@ public sealed class Cell
         {
             _cell.CellValue = null;
             _cell.DataType = null;
+            NotifyContentChanged(null);
             return;
         }
 
         int index = _sharedStringManager.AddOrGetString(value);
         _cell.CellValue = new CellValue(index.ToString());
         _cell.DataType = new EnumValue<CellValues>(CellValues.SharedString);
+        NotifyContentChanged(null);
     }
 
     /// <summary>
@@ -74,6 +88,7 @@ public sealed class Cell
     {
         _cell.CellValue = new CellValue(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
         _cell.DataType = new EnumValue<CellValues>(CellValues.Number);
+        NotifyContentChanged(null);
     }
 
     /// <summary>
@@ -88,6 +103,7 @@ public sealed class Cell
     {
         _cell.CellValue = new CellValue(value ? "1" : "0");
         _cell.DataType = new EnumValue<CellValues>(CellValues.Boolean);
+        NotifyContentChanged(null);
     }
 
     /// <summary>
@@ -106,6 +122,7 @@ public sealed class Cell
             style.NumberFormat = ExcelNumberFormat.ShortDate;
             _cell.StyleIndex = _styleManager.GetOrCreateCellFormatIndex(style);
         }
+        NotifyContentChanged(null);
     }
 
     /// <summary>
@@ -161,6 +178,7 @@ public sealed class Cell
         formula = formula.TrimStart('=');
         _cell.CellFormula = new CellFormula(formula);
         _cell.CellValue = null;
+        NotifyContentChanged(formula);
     }
 
     /// <summary>
@@ -321,6 +339,7 @@ public sealed class Cell
         _cell.CellValue = null;
         _cell.DataType = null;
         _cell.CellFormula = null;
+        NotifyContentChanged(null);
     }
 
     /// <summary>

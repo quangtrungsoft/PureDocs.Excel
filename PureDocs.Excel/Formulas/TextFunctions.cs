@@ -19,6 +19,54 @@ internal static class TextFunctions
         r.Register("REPT", Rept, 2, 2); r.Register("EXACT", Exact, 2, 2);
         r.Register("CHAR", CharFn, 1, 1); r.Register("CODE", Code, 1, 1);
         r.Register("T", T, 1, 1); r.Register("TEXTJOIN", TextJoin, 3);
+        r.Register("TEXTBEFORE", TextBefore, 2, 3);
+        r.Register("TEXTAFTER", TextAfter, 2, 3);
+    }
+
+    /// <summary>TEXTBEFORE(text, delimiter, [instance_num]) — text before the Nth delimiter.</summary>
+    private static FormulaValue TextBefore(List<FormulaNode> a, FormulaContext c)
+        => TextSplitPart(a, c, before: true);
+
+    /// <summary>TEXTAFTER(text, delimiter, [instance_num]) — text after the Nth delimiter.</summary>
+    private static FormulaValue TextAfter(List<FormulaNode> a, FormulaContext c)
+        => TextSplitPart(a, c, before: false);
+
+    private static FormulaValue TextSplitPart(List<FormulaNode> a, FormulaContext c, bool before)
+    {
+        if (!FormulaHelper.TryEvalString(a[0], c, out string s, out var e)) return e;
+        if (!FormulaHelper.TryEvalString(a[1], c, out string delim, out e)) return e;
+        int instance = 1;
+        if (a.Count > 2)
+        {
+            if (!FormulaHelper.TryEvalDouble(a[2], c, out double iv, out e)) return e;
+            instance = (int)iv;
+        }
+        if (instance == 0 || string.IsNullOrEmpty(delim)) return FormulaValue.ErrorValue;
+
+        // Locate the Nth delimiter occurrence (negative instance counts from the end).
+        int pos;
+        if (instance > 0)
+        {
+            pos = -1;
+            for (int k = 0; k < instance; k++)
+            {
+                pos = s.IndexOf(delim, pos + 1, StringComparison.OrdinalIgnoreCase);
+                if (pos < 0) return FormulaValue.ErrorNA;
+            }
+        }
+        else
+        {
+            pos = s.Length;
+            for (int k = 0; k < -instance; k++)
+            {
+                pos = s.LastIndexOf(delim, pos - 1, StringComparison.OrdinalIgnoreCase);
+                if (pos < 0) return FormulaValue.ErrorNA;
+            }
+        }
+
+        return before
+            ? FormulaValue.Text(s[..pos])
+            : FormulaValue.Text(s[(pos + delim.Length)..]);
     }
 
     private static FormulaValue Left(List<FormulaNode> a, FormulaContext c)

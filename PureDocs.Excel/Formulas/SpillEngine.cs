@@ -37,6 +37,13 @@ public sealed class SpillEngine
     /// <summary>Reverse map: occupied cell → anchor cell.</summary>
     private readonly Dictionary<CellAddress, CellAddress> _occupiedBySpill = new();
 
+    /// <summary>
+    /// Monotonic counter bumped whenever a spill region is created or removed. Recalc uses
+    /// it to detect that a pass changed the spill layout and re-evaluate so cells reading
+    /// spilled values (whose dependency on the anchor is not statically tracked) converge.
+    /// </summary>
+    public long ChangeCount { get; private set; }
+
     /// <summary>Information about a spill region.</summary>
     public sealed class SpillRegion
     {
@@ -86,6 +93,7 @@ public sealed class SpillEngine
             Data = array
         };
         _spillAnchors[anchor] = region;
+        ChangeCount++;
 
         // Mark all cells as occupied
         for (int r = 0; r < array.Rows; r++)
@@ -110,6 +118,7 @@ public sealed class SpillEngine
                 _occupiedBySpill.Remove(cell);
             }
         _spillAnchors.Remove(anchor);
+        ChangeCount++;
     }
 
     /// <summary>Gets the spill value at a cell (if it's part of a spill region).</summary>
@@ -136,6 +145,9 @@ public sealed class SpillEngine
 
     /// <summary>Number of active spill regions.</summary>
     public int RegionCount => _spillAnchors.Count;
+
+    /// <summary>All active spill regions (for persistence).</summary>
+    public IEnumerable<SpillRegion> Regions => _spillAnchors.Values;
 
     /// <summary>Clears all spill data.</summary>
     public void Clear()

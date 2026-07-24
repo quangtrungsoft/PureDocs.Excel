@@ -6,30 +6,51 @@ namespace TVE.PureDocs.Excel.Formulas;
 /// </summary>
 public sealed class NamedRangeManager
 {
-    private readonly Dictionary<string, NamedRange> _ranges = new(StringComparer.OrdinalIgnoreCase);
+    // Keyed by (scope, upper-cased name) so a workbook-global name and a sheet-scoped
+    // name with the same text coexist instead of overwriting each other.
+    // scope = -1 means workbook-wide; scope >= 0 is the 0-based sheet index.
+    private readonly Dictionary<string, NamedRange> _ranges = new(StringComparer.Ordinal);
 
-    /// <summary>Number of defined named ranges.</summary>
+    private static string Key(string name, int scope)
+        => scope < 0 ? name.ToUpperInvariant() : $"{scope}!{name.ToUpperInvariant()}";
+
+    /// <summary>Number of defined named ranges (across all scopes).</summary>
     public int Count => _ranges.Count;
 
-    /// <summary>Defines or updates a named range.</summary>
+    /// <summary>
+    /// Defines or updates a named range. <paramref name="sheetScope"/> is -1 for a
+    /// workbook-wide name, or the 0-based sheet index for a sheet-scoped name.
+    /// </summary>
     public void Define(string name, string reference, int sheetScope = -1)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Named range name cannot be empty.", nameof(name));
 
-        _ranges[name] = new NamedRange(name, reference, sheetScope);
+        _ranges[Key(name, sheetScope)] = new NamedRange(name, reference, sheetScope);
     }
 
-    /// <summary>Removes a named range.</summary>
-    public bool Remove(string name) => _ranges.Remove(name);
+    /// <summary>Removes a named range at the given scope (default workbook-wide).</summary>
+    public bool Remove(string name, int sheetScope = -1) => _ranges.Remove(Key(name, sheetScope));
 
-    /// <summary>Checks if a name is a defined named range.</summary>
-    public bool IsDefined(string name) => _ranges.ContainsKey(name);
+    /// <summary>Checks if a name is defined at the given scope (default workbook-wide).</summary>
+    public bool IsDefined(string name, int sheetScope = -1) => _ranges.ContainsKey(Key(name, sheetScope));
 
-    /// <summary>Gets a named range by name.</summary>
-    public bool TryGet(string name, out NamedRange range) => _ranges.TryGetValue(name, out range!);
+    /// <summary>Gets a workbook-wide named range by name (does not consider sheet scope).</summary>
+    public bool TryGet(string name, out NamedRange range) => _ranges.TryGetValue(Key(name, -1), out range!);
 
-    /// <summary>Gets all named ranges.</summary>
+    /// <summary>
+    /// Resolves a name for a formula on the given sheet: a name scoped to
+    /// <paramref name="currentSheetIndex"/> wins over a workbook-wide name of the same text
+    /// (matching Excel's scope precedence).
+    /// </summary>
+    public bool TryResolve(string name, int currentSheetIndex, out NamedRange range)
+    {
+        if (currentSheetIndex >= 0 && _ranges.TryGetValue(Key(name, currentSheetIndex), out range!))
+            return true;
+        return _ranges.TryGetValue(Key(name, -1), out range!);
+    }
+
+    /// <summary>Gets all named ranges (all scopes).</summary>
     public IEnumerable<NamedRange> GetAll() => _ranges.Values;
 
     /// <summary>Clears all named ranges.</summary>
@@ -47,7 +68,7 @@ public sealed class NamedRange
     /// <summary>Reference string (e.g., "Sheet1!A1:B10" or "A1:A100").</summary>
     public string Reference { get; }
 
-    /// <summary>Sheet scope (-1 = workbook-wide, ≥0 = sheet-specific).</summary>
+    /// <summary>Sheet scope (-1 = workbook-wide, &gt;=0 = sheet-specific).</summary>
     public int SheetScope { get; }
 
     public NamedRange(string name, string reference, int sheetScope = -1)

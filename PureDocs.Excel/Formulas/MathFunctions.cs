@@ -23,6 +23,20 @@ internal static class MathFunctions
         r.Register("SUMIF", SumIf, 2, 3); r.Register("COUNTIF", CountIf, 2, 2);
         r.Register("AVERAGEIF", AverageIf, 2, 3);
         r.Register("TRUNC", Trunc, 1, 2); r.Register("QUOTIENT", Quotient, 2, 2);
+
+        // Multi-condition aggregates (odd arg count: value range + criteria pairs).
+        r.Register("SUMIFS", SumIfs, 3);
+        r.Register("AVERAGEIFS", AverageIfs, 3);
+        r.Register("COUNTIFS", CountIfs, 2);       // criteria pairs only (even arg count)
+
+        // Trigonometry / hyperbolic (radians, per Excel).
+        r.Register("SIN", Sin, 1, 1); r.Register("COS", Cos, 1, 1); r.Register("TAN", Tan, 1, 1);
+        r.Register("ASIN", Asin, 1, 1); r.Register("ACOS", Acos, 1, 1); r.Register("ATAN", Atan, 1, 1);
+        r.Register("ATAN2", Atan2, 2, 2);
+        r.Register("SINH", Sinh, 1, 1); r.Register("COSH", Cosh, 1, 1); r.Register("TANH", Tanh, 1, 1);
+        r.Register("DEGREES", Degrees, 1, 1); r.Register("RADIANS", Radians, 1, 1);
+
+        r.Register("SUMSQ", SumSq, 1);
     }
 
     // ── Aggregates ──────────────────────────────────────────────────
@@ -336,6 +350,130 @@ internal static class MathFunctions
         for (int i = 0; i < len; i++)
             if (FormulaHelper.MatchesCriteria(range[i], criteria) && avgRange[i].TryAsDouble(out double d)) { sum += d; cnt++; }
         return cnt == 0 ? FormulaValue.ErrorDiv0 : FormulaValue.Number(sum / cnt);
+    }
+
+    // ── Multi-condition aggregates ──────────────────────────────────
+
+    /// <summary>SUMIFS(sum_range, criteria_range1, criteria1, [criteria_range2, criteria2], ...)</summary>
+    private static FormulaValue SumIfs(List<FormulaNode> a, FormulaContext c)
+    {
+        if ((a.Count % 2) == 0) return FormulaValue.ErrorValue; // must be odd: sum_range + pairs
+        var sumRange = EvalArray(a[0], c, out var err); if (err.IsError) return err;
+        if (!TryBuildConditions(a, 1, c, out var conds, out var cErr)) return cErr;
+
+        double sum = 0;
+        int len = sumRange.Length;
+        foreach (var cond in conds) len = Math.Min(len, cond.range.Length);
+        for (int i = 0; i < len; i++)
+            if (AllMatch(conds, i) && sumRange[i].TryAsDouble(out double d)) sum += d;
+        return FormulaValue.Number(sum);
+    }
+
+    /// <summary>AVERAGEIFS(avg_range, criteria_range1, criteria1, ...)</summary>
+    private static FormulaValue AverageIfs(List<FormulaNode> a, FormulaContext c)
+    {
+        if ((a.Count % 2) == 0) return FormulaValue.ErrorValue;
+        var avgRange = EvalArray(a[0], c, out var err); if (err.IsError) return err;
+        if (!TryBuildConditions(a, 1, c, out var conds, out var cErr)) return cErr;
+
+        double sum = 0; int cnt = 0;
+        int len = avgRange.Length;
+        foreach (var cond in conds) len = Math.Min(len, cond.range.Length);
+        for (int i = 0; i < len; i++)
+            if (AllMatch(conds, i) && avgRange[i].TryAsDouble(out double d)) { sum += d; cnt++; }
+        return cnt == 0 ? FormulaValue.ErrorDiv0 : FormulaValue.Number(sum / cnt);
+    }
+
+    /// <summary>COUNTIFS(criteria_range1, criteria1, [criteria_range2, criteria2], ...)</summary>
+    private static FormulaValue CountIfs(List<FormulaNode> a, FormulaContext c)
+    {
+        if ((a.Count % 2) != 0) return FormulaValue.ErrorValue; // must be even: pairs only
+        if (!TryBuildConditions(a, 0, c, out var conds, out var cErr)) return cErr;
+        if (conds.Count == 0) return FormulaValue.Zero;
+
+        int len = int.MaxValue;
+        foreach (var cond in conds) len = Math.Min(len, cond.range.Length);
+        int count = 0;
+        for (int i = 0; i < len; i++)
+            if (AllMatch(conds, i)) count++;
+        return FormulaValue.Number(count);
+    }
+
+    /// <summary>Builds (range, criteria) condition pairs starting at argument index <paramref name="start"/>.</summary>
+    private static bool TryBuildConditions(List<FormulaNode> a, int start, FormulaContext c,
+        out List<(ArrayValue range, string criteria)> conds, out FormulaValue error)
+    {
+        conds = new List<(ArrayValue, string)>();
+        error = default;
+        for (int i = start; i + 1 < a.Count; i += 2)
+        {
+            var range = EvalArray(a[i], c, out var rErr); if (rErr.IsError) { error = rErr; return false; }
+            var critVal = a[i + 1].Evaluate(c); if (critVal.IsError) { error = critVal; return false; }
+            conds.Add((range, critVal.AsText()));
+        }
+        return true;
+    }
+
+    private static bool AllMatch(List<(ArrayValue range, string criteria)> conds, int i)
+    {
+        foreach (var cond in conds)
+            if (!FormulaHelper.MatchesCriteria(cond.range[i], cond.criteria)) return false;
+        return true;
+    }
+
+    private static ArrayValue EvalArray(FormulaNode node, FormulaContext c, out FormulaValue error)
+    {
+        error = default;
+        var v = node.Evaluate(c);
+        if (v.IsError) { error = v; return WrapSingle(v); }
+        return v.IsArray ? v.ArrayVal : WrapSingle(v);
+    }
+
+    // ── Trigonometry / hyperbolic ───────────────────────────────────
+
+    private static FormulaValue Sin(List<FormulaNode> a, FormulaContext c) => Unary(a, c, Math.Sin);
+    private static FormulaValue Cos(List<FormulaNode> a, FormulaContext c) => Unary(a, c, Math.Cos);
+    private static FormulaValue Tan(List<FormulaNode> a, FormulaContext c) => Unary(a, c, Math.Tan);
+    private static FormulaValue Atan(List<FormulaNode> a, FormulaContext c) => Unary(a, c, Math.Atan);
+    private static FormulaValue Sinh(List<FormulaNode> a, FormulaContext c) => Unary(a, c, Math.Sinh);
+    private static FormulaValue Cosh(List<FormulaNode> a, FormulaContext c) => Unary(a, c, Math.Cosh);
+    private static FormulaValue Tanh(List<FormulaNode> a, FormulaContext c) => Unary(a, c, Math.Tanh);
+    private static FormulaValue Degrees(List<FormulaNode> a, FormulaContext c) => Unary(a, c, r => r * 180.0 / Math.PI);
+    private static FormulaValue Radians(List<FormulaNode> a, FormulaContext c) => Unary(a, c, d => d * Math.PI / 180.0);
+
+    private static FormulaValue Asin(List<FormulaNode> a, FormulaContext c)
+    {
+        if (!FormulaHelper.TryEvalDouble(a[0], c, out double v, out var e)) return e;
+        return (v < -1 || v > 1) ? FormulaValue.ErrorNum : FormulaValue.Number(Math.Asin(v));
+    }
+
+    private static FormulaValue Acos(List<FormulaNode> a, FormulaContext c)
+    {
+        if (!FormulaHelper.TryEvalDouble(a[0], c, out double v, out var e)) return e;
+        return (v < -1 || v > 1) ? FormulaValue.ErrorNum : FormulaValue.Number(Math.Acos(v));
+    }
+
+    private static FormulaValue Atan2(List<FormulaNode> a, FormulaContext c)
+    {
+        // Excel signature is ATAN2(x, y); .NET is Atan2(y, x).
+        if (!FormulaHelper.TryEvalDouble(a[0], c, out double x, out var e)) return e;
+        if (!FormulaHelper.TryEvalDouble(a[1], c, out double y, out e)) return e;
+        if (x == 0 && y == 0) return FormulaValue.ErrorDiv0;
+        return FormulaValue.Number(Math.Atan2(y, x));
+    }
+
+    private static FormulaValue Unary(List<FormulaNode> a, FormulaContext c, Func<double, double> fn)
+    {
+        if (!FormulaHelper.TryEvalDouble(a[0], c, out double v, out var e)) return e;
+        return FormulaValue.Number(fn(v));
+    }
+
+    private static FormulaValue SumSq(List<FormulaNode> a, FormulaContext c)
+    {
+        var nums = new List<double>();
+        if (!FormulaHelper.TryCollectNumbers(a, c, nums, out var err)) return err;
+        double s = 0; foreach (var n in nums) s += n * n;
+        return FormulaValue.Number(s);
     }
 
     private static ArrayValue WrapSingle(FormulaValue v)

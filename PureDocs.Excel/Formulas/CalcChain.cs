@@ -93,6 +93,7 @@ public sealed class CalcChain
     {
         _cellAstCache.TryRemove(cell, out _);
         RemoveCachedValue(cell);
+        Spills.ClearSpill(cell);
         _graph.RemoveDependencies(cell);
         MarkDirty(cell);
     }
@@ -170,7 +171,7 @@ public sealed class CalcChain
             }
 
             // Evaluate non-cyclic cells in topo order
-            int recalcCount = EvaluateInOrder(order, worksheet);
+            int recalcCount = EvaluateInOrderConverging(order, worksheet);
 
             _dirtyCells.Clear();
             return recalcCount + (cycleCells?.Count ?? 0);
@@ -273,10 +274,30 @@ public sealed class CalcChain
         return levels;
     }
 
+    /// <summary>
+    /// Evaluates <paramref name="order"/>, repeating the pass while spill regions keep changing.
+    /// A cell that reads a spilled value depends on the spill anchor, but that dependency is not
+    /// tracked in the static graph, so a first pass may evaluate the reader before the anchor
+    /// spills. Re-running once the spill layout is stable converges those readers (bounded to a
+    /// few passes to guard against oscillation).
+    /// </summary>
+    private int EvaluateInOrderConverging(List<CellAddress> order, Worksheet worksheet)
+    {
+        const int maxPasses = 4;
+        int count = 0;
+        for (int pass = 0; pass < maxPasses; pass++)
+        {
+            long before = Spills.ChangeCount;
+            count = EvaluateInOrder(order, worksheet);
+            if (Spills.ChangeCount == before) break; // spill layout stable → done
+        }
+        return count;
+    }
+
     private int EvaluateInOrder(List<CellAddress> order, Worksheet worksheet)
     {
         int count = 0;
-        var context = new FormulaContext(worksheet);
+        var context = new FormulaContext(worksheet, namedRanges: worksheet.NamedRanges);
         foreach (var cell in order)
         {
             if (_cellAstCache.TryGetValue(cell, out var ast))
@@ -286,6 +307,7 @@ public sealed class CalcChain
                 context.FormulaCol = cell.Column;
                 
                 var result = ast.Evaluate(context);
+                result = ApplySpill(cell, result, worksheet);
                 SetCachedValue(cell, result);
                 count++;
                 Counters.RecordEval();
@@ -299,8 +321,10 @@ public sealed class CalcChain
         if (_cellAstCache.TryGetValue(cell, out var ast))
         {
             // Create context with formula position for implicit intersection
-            var context = new FormulaContext(worksheet, cell.Row, cell.Column);
+            var context = new FormulaContext(worksheet, cell.Row, cell.Column,
+                namedRanges: worksheet.NamedRanges);
             var result = ast.Evaluate(context);
+            result = ApplySpill(cell, result, worksheet);
             SetCachedValue(cell, result);
             Counters.RecordEval();
         }
@@ -315,16 +339,61 @@ public sealed class CalcChain
     {
         if (_cellAstCache.TryGetValue(cell, out var ast))
         {
-            var context = new FormulaContext(worksheet, sharedEvaluatingCells);
+            var context = new FormulaContext(worksheet, sharedEvaluatingCells, worksheet.NamedRanges);
             // Set formula position for implicit intersection (@) operator
             context.FormulaRow = cell.Row;
             context.FormulaCol = cell.Column;
             
             var result = ast.Evaluate(context);
+            result = ApplySpill(cell, result, worksheet);
             SetCachedValue(cell, result);
             Counters.RecordEval();
         }
     }
+
+    /// <summary>
+    /// Handles dynamic-array spill for a formula result. A multi-cell array result
+    /// spills into the cells below/right of the anchor; the anchor caches the top-left
+    /// value. Returns <c>#SPILL!</c> if the target region is not empty. Scalars and
+    /// 1×1 arrays are returned unchanged (unwrapped).
+    /// </summary>
+    private FormulaValue ApplySpill(CellAddress anchor, FormulaValue result, Worksheet worksheet)
+    {
+        // Refresh: drop any prior spill from this anchor before re-evaluating.
+        Spills.ClearSpill(anchor);
+
+        if (!result.IsArray) return result;
+        var arr = result.ArrayVal;
+        if (arr.Rows <= 1 && arr.Columns <= 1)
+            return arr.Length > 0 ? arr[0] : FormulaValue.Blank;
+
+        var region = Spills.TrySpill(anchor, arr,
+            target => IsCellSpillEmpty(target, anchor, worksheet));
+        return region == null
+            ? FormulaValue.Error(FormulaError.Spill) // blocked by existing content
+            : arr[0, 0];
+    }
+
+    /// <summary>
+    /// A target cell is available for spill if it is the anchor itself, has no own content,
+    /// or is a cell that a previously-saved dynamic array spilled into (tracked in
+    /// <see cref="_spillOwnedOnLoad"/>) — so re-opening and recalculating does not falsely
+    /// report <c>#SPILL!</c> against the spill's own cached values.
+    /// </summary>
+    private bool IsCellSpillEmpty(CellAddress target, CellAddress anchor, Worksheet worksheet)
+    {
+        if (target.Equals(anchor)) return true;
+        if (_spillOwnedOnLoad.Contains(target)) return true;
+        var cell = worksheet.TryGetCell(target.ToReference());
+        return cell == null || (!cell.HasFormula && cell.GetValue() == null);
+    }
+
+    /// <summary>
+    /// Cells that were spilled into by a dynamic array in the file being read (i.e. they lie
+    /// within an array formula's <c>ref</c> but hold no formula of their own). Recorded during
+    /// <see cref="BuildFromWorksheet"/> so they are treated as spill-available, not user content.
+    /// </summary>
+    private readonly HashSet<CellAddress> _spillOwnedOnLoad = new();
 
     /// <summary>Full recalculate of all formula cells.</summary>
     private int FullRecalculate(Worksheet worksheet)
@@ -341,7 +410,7 @@ public sealed class CalcChain
             foreach (var cell in cycleCells)
                 SetCachedValue(cell, FormulaValue.Error(FormulaError.Ref));
 
-        int count = EvaluateInOrder(order, worksheet);
+        int count = EvaluateInOrderConverging(order, worksheet);
         _dirtyCells.Clear();
         return count + (cycleCells?.Count ?? 0);
     }
@@ -352,6 +421,7 @@ public sealed class CalcChain
         _graph.Clear();
         _cellAstCache.Clear();
         _valueCache.Clear();
+        _spillOwnedOnLoad.Clear();
 
         var sheetData = worksheet.GetSheetData();
         if (sheetData == null) return;
@@ -367,6 +437,10 @@ public sealed class CalcChain
 
                     var addr = CellAddress.FromReference(cellRef);
                     string formula = oxCell.CellFormula.Text.TrimStart('=');
+
+                    // An array formula with a multi-cell ref is a dynamic-array anchor;
+                    // record the cells it spilled into so they aren't seen as blocking content.
+                    RecordSpillOwnership(oxCell, addr);
 
                     try
                     {
@@ -388,6 +462,34 @@ public sealed class CalcChain
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// If the given OpenXML cell is a dynamic-array anchor (array formula with a multi-cell
+    /// <c>ref</c>), records every non-anchor cell inside that ref as spill-owned.
+    /// </summary>
+    private void RecordSpillOwnership(DocumentFormat.OpenXml.Spreadsheet.Cell oxCell, CellAddress anchor)
+    {
+        var f = oxCell.CellFormula;
+        if (f?.FormulaType == null || f.FormulaType.Value != DocumentFormat.OpenXml.Spreadsheet.CellFormulaValues.Array)
+            return;
+        string? refRange = f.Reference?.Value;
+        if (string.IsNullOrEmpty(refRange)) return;
+
+        int colon = refRange.IndexOf(':');
+        if (colon <= 0) return; // single-cell ref → not a spill
+        try
+        {
+            CellReference.Parse(refRange[..colon], out int sr, out int sc);
+            CellReference.Parse(refRange[(colon + 1)..], out int er, out int ec);
+            for (int r = sr; r <= er; r++)
+                for (int c = sc; c <= ec; c++)
+                {
+                    var cell = new CellAddress(r, c, anchor.SheetIndex);
+                    if (!cell.Equals(anchor)) _spillOwnedOnLoad.Add(cell);
+                }
+        }
+        catch { /* malformed ref → ignore */ }
     }
 
     /// <summary>Gets the cached value for a cell, or null if not calculated.</summary>
@@ -417,14 +519,6 @@ public sealed class CalcChain
 
     /// <summary>Spill engine for dynamic array support.</summary>
     public SpillEngine Spills { get; } = new();
-
-    /// <summary>Gets the cached AST for a cell (used by DynamicEvaluator).</summary>
-    internal FormulaNode? GetCachedAst(CellAddress cell)
-        => _cellAstCache.TryGetValue(cell, out var ast) ? ast : null;
-
-    /// <summary>Directly sets a cached value (used by DynamicEvaluator).</summary>
-    internal void SetCachedValueDirect(CellAddress cell, FormulaValue value)
-        => SetCachedValue(cell, value);
 
     // ── Cache Helper Methods ──────────────────────────────────────────
 

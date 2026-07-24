@@ -81,6 +81,9 @@ internal sealed class FunctionRegistry
         LookupFunctions.Register(registry);
         StatisticalFunctions.Register(registry);
         InfoFunctions.Register(registry);
+        FinancialFunctions.Register(registry);
+        ArrayFunctions.Register(registry);
+        ScopeFunctions.Register(registry);
         return registry;
     }
 }

@@ -45,6 +45,137 @@ public sealed class Worksheet
     /// <summary>Gets the calculation chain for dependency-aware recalc.</summary>
     public Formulas.CalcChain CalcChain => _calcChain ??= new Formulas.CalcChain();
 
+    /// <summary>
+    /// The workbook's named-range manager, or null when this worksheet is not
+    /// attached to a workbook. Used to resolve named ranges during evaluation.
+    /// </summary>
+    internal Formulas.NamedRangeManager? NamedRanges => _workbook?.NamedRanges;
+
+    /// <summary>
+    /// This worksheet's 0-based index within the workbook (matches OpenXML localSheetId),
+    /// or -1 when detached. Used to resolve sheet-scoped named ranges.
+    /// </summary>
+    internal int SheetIndex => _workbook?.Worksheets.IndexOf(this) ?? -1;
+
+    /// <summary>
+    /// Returns the spilled value for a cell that belongs to an active dynamic-array
+    /// spill region (but holds no formula of its own), or null if the cell is not spilled.
+    /// </summary>
+    internal Formulas.FormulaValue? TryGetSpillValue(string reference)
+    {
+        if (_calcChain == null || string.IsNullOrEmpty(reference)) return null;
+        var addr = Formulas.CellAddress.FromReference(reference);
+        return _calcChain.Spills.GetSpillValue(addr);
+    }
+
+    /// <summary>
+    /// Persists active dynamic-array spill regions into the OpenXML sheet: the anchor's
+    /// formula is marked as an array formula spanning the spill range (<c>&lt;f t="array" ref="A1:A3"&gt;</c>),
+    /// and cached values are written into every cell of the region so other tools read the
+    /// spilled results. Returns the anchor cells that were written (for workbook-level
+    /// dynamic-array metadata). Called during save.
+    /// </summary>
+    internal List<string> FlushSpillRanges()
+    {
+        var anchors = new List<string>();
+        if (_calcChain == null) return anchors;
+
+        foreach (var region in _calcChain.Spills.Regions)
+        {
+            var anchor = region.Anchor;
+            int rows = region.Rows, cols = region.Columns;
+            string anchorRef = anchor.ToReference();
+            string endRef = CellReference.FromRowColumn(anchor.Row + rows - 1, anchor.Column + cols - 1);
+            string spillRange = (rows == 1 && cols == 1) ? anchorRef : $"{anchorRef}:{endRef}";
+
+            var anchorCell = GetCell(anchorRef).OpenXmlCell;
+            if (anchorCell.CellFormula != null)
+            {
+                anchorCell.CellFormula.FormulaType = CellFormulaValues.Array;
+                anchorCell.CellFormula.Reference = spillRange;
+            }
+
+            for (int r = 0; r < rows; r++)
+                for (int c = 0; c < cols; c++)
+                {
+                    string cellRef = CellReference.FromRowColumn(anchor.Row + r, anchor.Column + c);
+                    WriteCachedValue(GetCell(cellRef).OpenXmlCell, region.Data[r, c]);
+                }
+
+            anchors.Add(anchorRef);
+        }
+        return anchors;
+    }
+
+    /// <summary>Writes a computed FormulaValue as an OpenXML cell's cached value.</summary>
+    private void WriteCachedValue(DocumentFormat.OpenXml.Spreadsheet.Cell oxCell, Formulas.FormulaValue val)
+    {
+        if (val.IsNumber)
+        {
+            oxCell.CellValue = new CellValue(val.NumberValue.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            oxCell.DataType = new EnumValue<CellValues>(CellValues.Number);
+        }
+        else if (val.IsBoolean)
+        {
+            oxCell.CellValue = new CellValue(val.BooleanValue ? "1" : "0");
+            oxCell.DataType = new EnumValue<CellValues>(CellValues.Boolean);
+        }
+        else if (val.IsError)
+        {
+            oxCell.CellValue = new CellValue(val.ToString());
+            oxCell.DataType = new EnumValue<CellValues>(CellValues.Error);
+        }
+        else if (val.IsText)
+        {
+            int idx = _sharedStringManager.AddOrGetString(val.TextValue);
+            oxCell.CellValue = new CellValue(idx.ToString());
+            oxCell.DataType = new EnumValue<CellValues>(CellValues.SharedString);
+        }
+        else
+        {
+            oxCell.CellValue = null;
+            oxCell.DataType = null;
+        }
+    }
+
+    private bool _suspendCalcTracking;
+
+    /// <summary>
+    /// Routes a cell content change into the calc chain so that a later
+    /// <see cref="SmartRecalculate"/> re-evaluates the affected cells.
+    /// Only acts once a calc chain exists (i.e. after the first recalc), so
+    /// worksheets that never recalc pay no tracking cost. Called by <see cref="Cell"/>.
+    /// </summary>
+    internal void NotifyCellContentChanged(string reference, string? formula)
+    {
+        if (_calcChain == null || _suspendCalcTracking || string.IsNullOrEmpty(reference))
+            return;
+
+        var address = Formulas.CellAddress.FromReference(reference);
+        if (formula != null)
+            _calcChain.SetFormula(address, formula);   // parse, update deps, mark dirty
+        else
+            _calcChain.RemoveFormula(address);          // drop any stale formula tracking + mark dependents dirty
+    }
+
+    /// <summary>
+    /// Suspends per-cell recalc tracking. Use around bulk edits (e.g. large
+    /// <see cref="Range.SetValues"/>) to avoid marking dependents dirty on every write;
+    /// call <see cref="ResumeRecalcTracking"/> afterwards. The next
+    /// <see cref="SmartRecalculate"/> then performs a full rebuild.
+    /// </summary>
+    public void SuspendRecalcTracking() => _suspendCalcTracking = true;
+
+    /// <summary>
+    /// Resumes per-cell recalc tracking and schedules a full recalc on the next
+    /// <see cref="SmartRecalculate"/>, since edits made while suspended were not tracked.
+    /// </summary>
+    public void ResumeRecalcTracking()
+    {
+        _suspendCalcTracking = false;
+        _calcChain?.MarkAllDirty();
+    }
+
     /// <summary>Gets the underlying SheetData element for formula scanning.</summary>
     internal DocumentFormat.OpenXml.Spreadsheet.SheetData? GetSheetData()
         => _worksheetPart.Worksheet.GetFirstChild<SheetData>();
@@ -66,7 +197,7 @@ public sealed class Worksheet
     /// <returns>The computed value (object? for backward compatibility).</returns>
     public object? EvaluateFormula(string formula)
     {
-        return Formulas.FormulaEvaluator.Evaluate(formula, this).ToObject();
+        return Formulas.FormulaEvaluator.Evaluate(formula, this, NamedRanges).ToObject();
     }
 
     /// <summary>
@@ -74,7 +205,7 @@ public sealed class Worksheet
     /// </summary>
     internal Formulas.FormulaValue EvaluateFormulaValue(string formula)
     {
-        return Formulas.FormulaEvaluator.Evaluate(formula, this);
+        return Formulas.FormulaEvaluator.Evaluate(formula, this, NamedRanges);
     }
 
     /// <summary>
@@ -92,7 +223,7 @@ public sealed class Worksheet
             {
                 if (oxCell.CellFormula != null && !string.IsNullOrEmpty(oxCell.CellFormula.Text))
                 {
-                    var result = Formulas.FormulaEvaluator.Evaluate(oxCell.CellFormula.Text, this);
+                    var result = Formulas.FormulaEvaluator.Evaluate(oxCell.CellFormula.Text, this, NamedRanges);
 
                     if (result.IsError)
                         continue; // Leave error formulas as-is
@@ -149,11 +280,14 @@ public sealed class Worksheet
         var sheetData = worksheetPart.Worksheet.GetFirstChild<SheetData>() 
             ?? worksheetPart.Worksheet.AppendChild(new SheetData());
 
-        CellReference.Parse(cellReference, out int rowIndex, out _);
-        
+        // Canonicalize (strip '$', normalize case) so "$C$2"/"c2"/"C2" all map to
+        // the same stored cell — matching Excel addressing and the ordinal-sorted layout.
+        CellReference.Parse(cellReference, out int rowIndex, out int colIndex);
+        string canonical = CellReference.FromRowColumn(rowIndex, colIndex);
+
         var row = FindOrCreateRow(sheetData, rowIndex);
-        var cell = FindOrCreateCell(row, cellReference);
-        return new Cell(cell, _sharedStringManager, _styleManager);
+        var cell = FindOrCreateCell(row, canonical);
+        return new Cell(cell, _sharedStringManager, _styleManager, this);
     }
 
     /// <summary>
@@ -172,17 +306,18 @@ public sealed class Worksheet
         var sheetData = _worksheetPart.Worksheet.GetFirstChild<SheetData>();
         if (sheetData == null) return null;
 
-        CellReference.Parse(cellReference, out int rowIndex, out _);
-        
+        CellReference.Parse(cellReference, out int rowIndex, out int colIndex);
+        string canonical = CellReference.FromRowColumn(rowIndex, colIndex);
+
         var row = sheetData.Elements<Row>().FirstOrDefault(r => r.RowIndex?.Value == rowIndex);
         if (row == null) return null;
 
         var cell = row.Elements<DocumentFormat.OpenXml.Spreadsheet.Cell>()
-            .FirstOrDefault(c => c.CellReference?.Value == cellReference);
-        
+            .FirstOrDefault(c => c.CellReference?.Value == canonical);
+
         if (cell == null) return null;
 
-        return new Cell(cell, _sharedStringManager, _styleManager);
+        return new Cell(cell, _sharedStringManager, _styleManager, this);
     }
 
     /// <summary>
@@ -209,14 +344,15 @@ public sealed class Worksheet
         var sheetData = worksheetPart.Worksheet.GetFirstChild<SheetData>();
         if (sheetData == null) return null;
 
-        CellReference.Parse(cellReference, out int rowIndex, out _);
-        
+        CellReference.Parse(cellReference, out int rowIndex, out int colIndex);
+        string canonical = CellReference.FromRowColumn(rowIndex, colIndex);
+
         var row = sheetData.Elements<Row>().FirstOrDefault(r => r.RowIndex?.Value == rowIndex);
         if (row == null) return null;
 
         var cell = row.Elements<DocumentFormat.OpenXml.Spreadsheet.Cell>()
-            .FirstOrDefault(c => c.CellReference?.Value == cellReference);
-        
+            .FirstOrDefault(c => c.CellReference?.Value == canonical);
+
         if (cell == null) return null;
 
         return new Cell(cell, _sharedStringManager, _styleManager).GetValue();

@@ -12,7 +12,7 @@ public enum FormulaError : byte
 /// <summary>Kind of value stored in a FormulaValue.</summary>
 public enum FormulaValueKind : byte
 {
-    Blank, Number, Text, Boolean, Error, Array
+    Blank, Number, Text, Boolean, Error, Array, Lambda
 }
 
 /// <summary>
@@ -53,6 +53,8 @@ public readonly struct FormulaValue : IEquatable<FormulaValue>
     public static FormulaValue Boolean(bool v) => v ? True : False;
     public static FormulaValue Error(FormulaError e) => new(FormulaValueKind.Error, error: e);
     public static FormulaValue Array(ArrayValue a) => new(FormulaValueKind.Array, 0, a);
+    /// <summary>Wraps a LAMBDA definition (see <c>LambdaValue</c>) so it can flow through evaluation.</summary>
+    public static FormulaValue Lambda(object lambda) => new(FormulaValueKind.Lambda, 0, lambda);
 
     // ── Type checks ─────────────────────────────────────────────────
     public FormulaValueKind Kind => _kind;
@@ -62,6 +64,9 @@ public readonly struct FormulaValue : IEquatable<FormulaValue>
     public bool IsBoolean => _kind == FormulaValueKind.Boolean;
     public bool IsError => _kind == FormulaValueKind.Error;
     public bool IsArray => _kind == FormulaValueKind.Array;
+    public bool IsLambda => _kind == FormulaValueKind.Lambda;
+    /// <summary>The wrapped LAMBDA definition (cast to <c>LambdaValue</c>), or null.</summary>
+    public object? LambdaObject => _kind == FormulaValueKind.Lambda ? _object : null;
     public bool IsNumeric => _kind is FormulaValueKind.Number or FormulaValueKind.Boolean or FormulaValueKind.Blank;
     public FormulaError ErrorCode => _error;
 
