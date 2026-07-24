@@ -8,7 +8,7 @@
 
 		<!-- NuGet -->
 		<PackageId>TVE.PureDocs.Excel</PackageId>
-		<Version>1.0.0</Version>
+		<Version>1.0.1</Version>
 		<Authors>devnn</Authors>
 		<Description>Thư viện **TVE.PureDocs.Excel** cung cấp một bộ công cụ mạnh mẽ để làm việc với tệp Excel (.xlsx) trong .NET. Thư viện này hỗ trợ tạo, đọc, ghi, định dạng và tính toán công thức Excel với hiệu suất cao.</Description>
 		<PackageTags>excel;puredocs;tve;devnn</PackageTags>
