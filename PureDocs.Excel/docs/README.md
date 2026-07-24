@@ -13,8 +13,11 @@ Thư viện **TVE.PureDocs.Excel** cung cấp một bộ công cụ mạnh mẽ 
     *   Hỗ trợ Cell Indexer (ví dụ: `sheet["A1"]` hoặc `sheet[1, 1]`).
 3.  **Engine Tính toán Công thức (Formula Engine)**:
     *   Hỗ trợ gán công thức cho ô (`SetFormula`).
-    *   **Smart Recalculation**: Tính toán lại thông minh dựa trên cây phụ thuộc (chỉ tính lại những ô bị ảnh hưởng).
-    *   Hỗ trợ hàng loạt hàm Excel thông dụng: Toán học, Logic, Văn bản, Ngày tháng, Thống kê, Tra cứu (Lookup).
+    *   **Smart Recalculation**: Tự động đánh dấu khi sửa ô và chỉ tính lại những ô bị ảnh hưởng theo cây phụ thuộc.
+    *   **157 hàm** Excel: Toán học, Lượng giác, Logic, Văn bản, Ngày tháng, Thống kê, Tra cứu (`VLOOKUP`/`XLOOKUP`/`INDIRECT`/`SUBTOTAL`…), Đa điều kiện (`SUMIFS`/`COUNTIFS`/`AVERAGEIFS`), Tài chính (`PMT`/`FV`/`PV`/`NPV`/`IRR`).
+    *   **Named Ranges** (cấp workbook & theo sheet) — đọc/ghi round-trip vào file qua `workbook.NamedRanges`.
+    *   **Dynamic Arrays (Excel 365)**: `FILTER`, `SORT`, `UNIQUE`, `SEQUENCE`, `TRANSPOSE`, `MMULT`, `TEXTSPLIT` với cơ chế tràn ô (spill) và ghi XML chuẩn Excel.
+    *   **`LET`** và **`LAMBDA`** (biến cục bộ, hàm ẩn danh, closure).
 4.  **Định dạng & Styling (Fluent API)**:
     *   Hỗ trợ API dạng chuỗi (fluent) giúp viết code gọn gàng.
     *   Định dạng Font: Bold, Italic, Size, Color, FontName.

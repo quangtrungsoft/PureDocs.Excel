@@ -7,11 +7,16 @@
 ## 🌟 Điểm nổi bật (Key Features)
 
 *   🚀 **Hiệu suất vượt trội**: Thao tác hàng triệu ô tính chỉ trong vài giây với cơ chế quản lý bộ nhớ thông minh.
-*   🧮 **Formula Engine mạnh mẽ**: Hỗ trợ hơn 100+ hàm Excel thông dụng với khả năng **Smart Recalculation** (chỉ tính lại những ô bị ảnh hưởng).
+*   🧮 **Formula Engine mạnh mẽ**: Hơn **157 hàm** Excel thông dụng với **Smart Recalculation** (tự động đánh dấu và chỉ tính lại những ô bị ảnh hưởng).
+*   🔠 **Named Ranges**: Khai báo vùng đặt tên cấp workbook hoặc theo sheet; đọc/ghi round-trip vào file.
+*   🧊 **Dynamic Arrays (Excel 365)**: Công thức tràn ô (spill) với `FILTER`, `SORT`, `UNIQUE`, `SEQUENCE`, `TRANSPOSE`, `MMULT`, `TEXTSPLIT`; ghi XML dynamic-array chuẩn Excel.
+*   λ **`LET` & `LAMBDA`**: Khai báo biến cục bộ và hàm ẩn danh (kèm closure).
 *   🎨 **Fluent Styling API**: Thiết kế định dạng ô tính (Font, Màu sắc, Viền, Căn lề) một cách trực quan và gọn gàng.
 *   📊 **Hỗ trợ Biểu đồ**: Tạo nhanh 22 loại biểu đồ (Column, Bar, Line, Pie, Radar...) với API cấu hình chuyên sâu.
 *   🏗️ **Bố cục linh hoạt**: Merge cells, Freeze panes, Auto-fit cột, AutoFilter, Dropdown Validation.
 *   🧩 **Deduplication tự động**: Tối ưu dung lượng file bằng cách tự động loại bỏ các định dạng trùng lặp và sử dụng Shared String Table.
+
+> **Mới trong v1.0.1** — Named Ranges hoạt động đầu-cuối, Dynamic Arrays (spill) tích hợp vào pipeline + ghi XML chuẩn Excel, thêm 30 hàm (`SUMIFS`/`COUNTIFS`/`AVERAGEIFS`, lượng giác, `XLOOKUP`/`INDIRECT`/`SUBTOTAL`, `PMT`/`FV`/`PV`/`NPV`/`IRR`, `LET`/`LAMBDA`…). Xem [release notes v1.0.1](PureDocs.Excel/docs/releasenotes/v1.0.1.md).
 
 ---
 
