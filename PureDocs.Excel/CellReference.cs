@@ -26,6 +26,11 @@ internal static class CellReference
         if (string.IsNullOrWhiteSpace(cellReference))
             throw new ArgumentException("Cell reference cannot be null or empty.", nameof(cellReference));
 
+        // Absolute markers ($A$1) are valid A1 syntax; drop them before parsing.
+        // Guarded so the common (no-'$') path stays allocation-free.
+        if (cellReference.IndexOf('$') >= 0)
+            cellReference = cellReference.Replace("$", "");
+
         int i = 0;
         column = 0;
 

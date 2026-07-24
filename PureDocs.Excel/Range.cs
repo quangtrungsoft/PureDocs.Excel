@@ -46,26 +46,36 @@ public sealed class Range
         int rows = values.GetLength(0);
         int cols = values.GetLength(1);
 
-        for (int row = 0; row < rows && _startRow + row <= _endRow; row++)
+        // Bulk write: suspend per-cell recalc tracking so we don't mark dependents
+        // dirty once per cell; a single full recalc is scheduled on resume.
+        _worksheet.SuspendRecalcTracking();
+        try
         {
-            for (int col = 0; col < cols && _startColumn + col <= _endColumn; col++)
+            for (int row = 0; row < rows && _startRow + row <= _endRow; row++)
             {
-                var cell = _worksheet.GetCell(_startRow + row, _startColumn + col);
-                var value = values[row, col];
+                for (int col = 0; col < cols && _startColumn + col <= _endColumn; col++)
+                {
+                    var cell = _worksheet.GetCell(_startRow + row, _startColumn + col);
+                    var value = values[row, col];
 
-                if (value is string str)
-                    cell.SetValue(str);
-                else if (value is double d)
-                    cell.SetValue(d);
-                else if (value is int i)
-                    cell.SetValue(i);
-                else if (value is bool b)
-                    cell.SetValue(b);
-                else if (value is DateTime dt)
-                    cell.SetValue(dt);
-                else if (value != null)
-                    cell.SetValue(value.ToString()!);
+                    if (value is string str)
+                        cell.SetValue(str);
+                    else if (value is double d)
+                        cell.SetValue(d);
+                    else if (value is int i)
+                        cell.SetValue(i);
+                    else if (value is bool b)
+                        cell.SetValue(b);
+                    else if (value is DateTime dt)
+                        cell.SetValue(dt);
+                    else if (value != null)
+                        cell.SetValue(value.ToString()!);
+                }
             }
+        }
+        finally
+        {
+            _worksheet.ResumeRecalcTracking();
         }
     }
 

@@ -168,9 +168,16 @@ public sealed class DependencyGraph
         var affected = new HashSet<CellAddress>();
         var queue = new Queue<CellAddress>();
 
-        // Seed with dependents of changed cells (using area-aware lookup)
+        // Seed with the changed cells themselves (when they are formula cells) plus
+        // their dependents. A changed cell that holds a formula must be recomputed too:
+        // e.g. a full recalc passes every formula cell as "changed", and editing a
+        // formula cell's own text changes its result. Plain value cells are not
+        // formula cells, so only their dependents are seeded (their stored value is final).
         foreach (var cell in changedCells)
         {
+            if (_formulaCells.Contains(cell))
+                if (affected.Add(cell)) queue.Enqueue(cell);
+
             var deps = GetAllDependents(cell);
             foreach (var dep in deps)
                 if (affected.Add(dep)) queue.Enqueue(dep);

@@ -55,7 +55,30 @@ internal sealed class FunctionCallNode(string functionName, List<FormulaNode> ar
 {
     public string FunctionName => functionName;
     public List<FormulaNode> Arguments => arguments;
-    public override FormulaValue Evaluate(FormulaContext context) => context.EvaluateFunction(functionName, arguments);
+    public override FormulaValue Evaluate(FormulaContext context)
+    {
+        // A locally-bound name (from LET) that holds a lambda is callable: f(args).
+        if (context.TryGetLocal(functionName, out var local) && local.IsLambda)
+        {
+            var argVals = new List<FormulaValue>(arguments.Count);
+            foreach (var arg in arguments) argVals.Add(arg.Evaluate(context));
+            return context.InvokeLambda(local.LambdaObject!, argVals);
+        }
+        return context.EvaluateFunction(functionName, arguments);
+    }
+}
+
+/// <summary>Invocation of a lambda-valued expression: e.g. LAMBDA(x,x+1)(5).</summary>
+internal sealed class InvokeNode(FormulaNode callable, List<FormulaNode> arguments) : FormulaNode
+{
+    public override FormulaValue Evaluate(FormulaContext context)
+    {
+        var fn = callable.Evaluate(context);
+        if (!fn.IsLambda) return FormulaValue.ErrorValue;
+        var argVals = new List<FormulaValue>(arguments.Count);
+        foreach (var arg in arguments) argVals.Add(arg.Evaluate(context));
+        return context.InvokeLambda(fn.LambdaObject!, argVals);
+    }
 }
 
 /// <summary>Sheet-prefixed cell reference: Sheet1!A1</summary>
@@ -82,7 +105,7 @@ internal sealed class NamedRangeNode(string name) : FormulaNode
 {
     public string Name => name;
     public override FormulaValue Evaluate(FormulaContext context)
-        => context.ResolveNamedRange(name);
+        => context.TryGetLocal(name, out var local) ? local : context.ResolveNamedRange(name);
 }
 
 /// <summary>Structured reference: Table1[Column1]</summary>

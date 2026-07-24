@@ -109,7 +109,14 @@ internal sealed class FormulaContext
                 return FormulaEvaluator.EvaluateInternal(formula, _worksheet, _evaluatingCells!, _namedRanges);
             }
 
-            return FormulaValue.FromObject(cell.GetValue());
+            var stored = cell.GetValue();
+            if (stored == null)
+            {
+                // The cell may be covered by a dynamic-array spill from another cell.
+                var spilled = _worksheet.TryGetSpillValue(cellReference);
+                if (spilled.HasValue) return spilled.Value;
+            }
+            return FormulaValue.FromObject(stored);
         }
         catch (FormulaException)
         {
@@ -255,10 +262,57 @@ internal sealed class FormulaContext
         }
     }
 
+    // ── Local scope (LET bindings / LAMBDA parameters) ───────────────
+    // A stack of name→value frames. Names here shadow named ranges and are used to
+    // implement LET() and LAMBDA() without touching the dependency graph.
+    private readonly List<Dictionary<string, FormulaValue>> _scopes = new();
+
+    /// <summary>Pushes a new local-binding frame (LET/LAMBDA scope).</summary>
+    public void PushScope(Dictionary<string, FormulaValue> frame) => _scopes.Add(frame);
+
+    /// <summary>Pops the most recent local-binding frame.</summary>
+    public void PopScope() { if (_scopes.Count > 0) _scopes.RemoveAt(_scopes.Count - 1); }
+
+    /// <summary>Looks up a locally-bound name (innermost frame wins).</summary>
+    public bool TryGetLocal(string name, out FormulaValue value)
+    {
+        for (int i = _scopes.Count - 1; i >= 0; i--)
+            if (_scopes[i].TryGetValue(name, out value)) return true;
+        value = default;
+        return false;
+    }
+
+    /// <summary>Flattens all in-scope local bindings into one frame (for lambda closure capture).</summary>
+    public Dictionary<string, FormulaValue> SnapshotScope()
+    {
+        var snap = new Dictionary<string, FormulaValue>(StringComparer.OrdinalIgnoreCase);
+        foreach (var frame in _scopes)          // outer→inner so inner shadows outer
+            foreach (var kv in frame) snap[kv.Key] = kv.Value;
+        return snap;
+    }
+
+    /// <summary>
+    /// Invokes a LAMBDA with the given argument values: restores its captured closure,
+    /// binds parameters, and evaluates the body. Returns #VALUE! on arity mismatch.
+    /// </summary>
+    public FormulaValue InvokeLambda(object lambdaObj, List<FormulaValue> argValues)
+    {
+        if (lambdaObj is not LambdaValue lam) return FormulaValue.ErrorValue;
+        if (argValues.Count != lam.Parameters.Length) return FormulaValue.ErrorValue;
+
+        var frame = new Dictionary<string, FormulaValue>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in lam.Captured) frame[kv.Key] = kv.Value;
+        for (int i = 0; i < lam.Parameters.Length; i++) frame[lam.Parameters[i]] = argValues[i];
+
+        PushScope(frame);
+        try { return lam.Body.Evaluate(this); }
+        finally { PopScope(); }
+    }
+
     /// <summary>Resolves a named range reference.</summary>
     public FormulaValue ResolveNamedRange(string name)
     {
-        if (_namedRanges == null || !_namedRanges.TryGet(name, out var range))
+        if (_namedRanges == null || !_namedRanges.TryResolve(name, _worksheet.SheetIndex, out var range))
             return FormulaValue.ErrorName;
 
         var (sheetName, startRef, endRef) = range.ParseReference();

@@ -59,6 +59,13 @@ public sealed class WorksheetCollection : IEnumerable<Worksheet>
     }
 
     /// <summary>
+    /// Gets the 0-based index of a worksheet within the workbook's sheet order,
+    /// or -1 if it does not belong to this collection. This index matches the
+    /// OpenXML <c>localSheetId</c> used for sheet-scoped named ranges.
+    /// </summary>
+    internal int IndexOf(Worksheet worksheet) => _worksheets.IndexOf(worksheet);
+
+    /// <summary>
     /// Adds a new worksheet with the specified name.
     /// </summary>
     public Worksheet Add(string name)

@@ -194,6 +194,24 @@ internal sealed class FormulaParser
     {
         var node = ParsePrimary();
 
+        // Postfix invocation of a lambda-valued expression, e.g. LAMBDA(x, x+1)(5).
+        while (Current.Type == FormulaTokenType.LeftParen)
+        {
+            Advance(); // consume '('
+            var args = new List<FormulaNode>();
+            if (Current.Type != FormulaTokenType.RightParen)
+            {
+                args.Add(ParseComparison());
+                while (Current.Type == FormulaTokenType.Comma)
+                {
+                    Advance();
+                    args.Add(ParseComparison());
+                }
+            }
+            Expect(FormulaTokenType.RightParen);
+            node = new InvokeNode(node, args);
+        }
+
         while (Current.Type == FormulaTokenType.Percent)
         {
             Advance();
