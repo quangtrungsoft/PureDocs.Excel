@@ -215,11 +215,13 @@ using TVE.PureDocs.Excel.Formulas;
 sheet["A1"].SetFormula("='Tháng 1'!B2 + 'Tháng 2'!B2");
 
 // 2. Sử dụng Named Ranges (Đặt tên vùng ô)
-var namedRangeManager = new NamedRangeManager();
-namedRangeManager.Define("GiaBan", "Sheet1!$C$2:$C$100");
+// Named ranges thuộc về workbook; công thức trên các sheet của workbook
+// sẽ tự động phân giải theo các tên đã khai báo tại đây.
+workbook.NamedRanges.Define("GiaBan", "Sheet1!$C$2:$C$100");
 
 // Evaluate công thức sử dụng tên đã đặt
 var result = sheet.EvaluateFormula("SUM(GiaBan)");
+// Các tên này cũng được ghi vào <definedNames> khi SaveAs và đọc lại khi Open.
 
 // 3. Tham chiếu 3D (Tính tổng ô A1 từ Sheet1 đến Sheet3)
 sheet["B1"].SetFormula("SUM(Sheet1:Sheet3!A1)");
